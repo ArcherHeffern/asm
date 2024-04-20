@@ -1,4 +1,5 @@
 from sys import argv
+from io import StringIO
 from pprint import PrettyPrinter
 
 PP = PrettyPrinter()
@@ -176,6 +177,10 @@ def get_sh_flags(flags: int):
 			out.append(v)
 	return out
 
+
+def dissassemble_x86_64(data: bytes):
+	return data
+
 with open(filename, 'rb') as f:
 	def read(n: int) -> bytes:
 		return f.read(n)
@@ -215,9 +220,6 @@ with open(filename, 'rb') as f:
 	elf_header["e_shnum"] = to_int(read_u2())
 	elf_header["e_shstrndx"] = to_int(read_u2())
 
-	print("__Elf Header__")
-	PP.pprint(elf_header)
-
 	program_headers = []
 	num_entries = elf_header["e_phnum"]
 	for _ in range(num_entries):
@@ -234,10 +236,6 @@ with open(filename, 'rb') as f:
 		program_header["p_align"] = to_int(read(8))
 		program_headers.append(program_header)
 
-	print()
-	print("__Program Headers__")
-	PP.pprint(program_headers)
-
 	section_headers = []
 	f.seek(elf_header["e_shoff"])
 	shnum = elf_header["e_shnum"]
@@ -246,11 +244,27 @@ with open(filename, 'rb') as f:
 		section_header["sh_name"] = read_u4()
 		section_header["sh_type"] = sh_types[to_int(read_u4())]
 		section_header["sh_flags"] = get_sh_flags(to_int(read(8)))
-		# section_header
-		# section_header
-		# section_header
+		section_header["sh_addr"] = to_int(read(8))
+		section_header["sh_offset"] = to_int(read(8))
+		section_header["sh_size"] = to_int(read(8))
+		section_header["sh_link"] = to_int(read_u4())
+		section_header["sh_info"] = read_u4()
+		section_header["sh_addralign"] = to_int(read(8))
+		section_header["sh_entsize"] = to_int(read(8))
 		section_headers.append(section_header)
 
-print()
-print("__Section Headers__")
-PP.pprint(section_headers)
+	for section_header in section_headers:
+		f.seek(section_header["sh_offset"])
+		data = read(section_header["sh_size"])
+		if section_header["sh_type"] == sh_types[1]:
+			data = dissassemble_x86_64(data)
+		section_header["contents"] = data
+		
+	print("__Elf Header__")
+	PP.pprint(elf_header)
+	print()
+	print("__Program Headers__")
+	PP.pprint(program_headers)
+	print()
+	print("__Section Headers__")
+	PP.pprint(section_headers)
