@@ -1,3 +1,2 @@
 LOAD R1, =5
-HALT
 
