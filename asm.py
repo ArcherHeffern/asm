@@ -490,7 +490,7 @@ class Parser:
 
 	def __parse_halt_statement(self):
 		self.__consume(TokenType.HALT)
-		def lambda():
+		def lambda_():
 			self.memory.status_registers["halt"] = 1
 		return lambda_
 
