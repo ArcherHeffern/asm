@@ -12,6 +12,12 @@ TODO:
 - Feature to add line numbers
 - MMU to translate addresses
 - History feature - go back in time
+- Program to insert line numbers
+
+Next Version
+- Assembler
+- All memory is integers
+- Meta compiler: Use dictionaries to store rules
 """
 
 EXT_SUCCESS = 0
@@ -51,10 +57,13 @@ class TokenType(Enum):
 	SUB = auto()
 	MUL = auto()
 	DIV = auto()
+	INC = auto()
 
 	HALT = auto()
+	SKIP = auto()
 
 	PRINT = auto()
+	DUMP = auto()
 
 	EOF = auto()
 	EOL = auto()
@@ -67,8 +76,11 @@ KEYWORDS = {
 	"SUB": TokenType.SUB,
 	"MUL": TokenType.MUL,
 	"DIV": TokenType.DIV,
+	"INC": TokenType.INC,
 	"HALT": TokenType.HALT,
+	"SKIP": TokenType.SKIP,
 	"PRINT": TokenType.PRINT,
+	"DUMP": TokenType.DUMP,
 }
 
 
@@ -92,7 +104,7 @@ class Memory:
 	def load(self, lines: list[str], size: int = 100):
 		self.addresses = [0] * size
 		for i, line in enumerate(lines):
-			self.addresses[i+self.starting_address] = line
+			self.addresses[i+self.starting_address] = line.strip()
 			
 
 	def fde_cycle(self, scanner: 'Scanner', parser: 'Parser'):
@@ -202,7 +214,7 @@ class Scanner:
 		...
 
 	def __identifier(self, memory: Memory):
-		while self.__peek().isalnum():
+		while not self.__is_at_end() and self.__peek().isalnum():
 			self.__advance()
 		val = self.line[self.start: self.curr]
 		if self.__peek() == ":":
@@ -247,11 +259,15 @@ class Parser:
 				statement = self.__parse_mul_statement()
 			case TokenType.DIV:
 				statement = self.__parse_div_statement()
+			case TokenType.INC:
+				statement = self.__parse_inc_statement()
 			case TokenType.HALT:
 				statement = self.__parse_halt_statement()
 			case TokenType.PRINT:
 				statement = self.__parse_print_statement()
-			case TokenType.EOL:
+			case TokenType.DUMP:
+				statement = self.__parse_dump_statement()
+			case TokenType.NUMBER|TokenType.EOL|TokenType.SKIP: # Do nothing in these cases
 				statement = lambda: 0
 			case _:
 				error(f"Unexpected token {curr} on line {self.memory.status_registers['ip']}")
@@ -311,19 +327,70 @@ class Parser:
 				error("Error parsing store addr")
 
 	def __parse_add_statement(self):
-		...
+		self.__consume(TokenType.ADD)
+		r1 = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		r2 = self.__consume(TokenType.REGISTER).literal
+		def lambda_():
+			self.memory.registers[r1] = self.memory.registers[r1] + self.memory.registers[r2]
+		return lambda_
+	
 	def __parse_sub_statement(self):
-		...
+		r1 = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		r2 = self.__consume(TokenType.REGISTER).literal
+		def lambda_():
+			self.memory.registers[r1] = self.memory.registers[r1] - self.memory.registers[r2]
+
+		return lambda_
 	def __parse_mul_statement(self):
-		...
+		r1 = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		r2 = self.__consume(TokenType.REGISTER).literal
+		def lambda_():
+			self.memory.registers[r1] = self.memory.registers[r1] * self.memory.registers[r2]
+		return lambda_
+
 	def __parse_div_statement(self):
-		...
+		r1 = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		r2 = self.__consume(TokenType.REGISTER).literal
+		def lambda_():
+			self.memory.registers[r1] = self.memory.registers[r1] / self.memory.registers[r2]
+			self.memory.registers[r2] = self.memory.registers[r1] % self.memory.registers[r2]
+		return lambda_
+
+	def __parse_inc_statement(self):
+		self.__consume(TokenType.INC)
+		r = self.__consume(TokenType.REGISTER).literal
+		def lambda_():
+			self.memory.registers[r] = int(self.memory.registers[r]) + 1
+		return lambda_
+
 	def __parse_halt_statement(self):
 		self.__consume(TokenType.HALT)
 		return None
 
 	def __parse_print_statement(self):
-		...
+		self.__consume(TokenType.PRINT)
+		nxt = self.__peek()
+		match nxt.tokentype:
+			case TokenType.REGISTER:
+				r = self.__consume(TokenType.REGISTER).literal
+				return lambda: print(f"{r}: {self.memory.registers[r]}")
+			case TokenType.NUMBER:
+				n = self.consume(TokenType.NUMBER)
+				return lambda: print(f"M[{n}]: {self.memory.addresses[n]}")
+			case _:
+				error("Error parsing print statement")
+				
+
+	def __parse_dump_statement(self):
+		self.__consume(TokenType.DUMP)
+		def lambda_():
+			print(f"Registers: {self.memory.registers}")
+			print(f"Main Memory: {self.memory.addresses}")
+		return lambda_
 
 
 	def __parse_direct_addr(self):
@@ -349,10 +416,21 @@ class Parser:
 		return lambda_
 
 	def __parse_indirect_addr(self):
-		...
+		self.__consume(TokenType.AT)
+		num = self.__consume(TokenType.NUMBER).literal
+		def lambda_():
+			first = self.memory.addresses[num]
+			second = self.memory.addresses[first]
+			return second
+		return lambda_
 
 	def __parse_relative_addr(self):
-		...
+		self.__consume(TokenType.DOLLAR)
+		num = self.__consume(TokenType.NUMBER).literal
+		def lambda_():
+			current_location = self.memory.status_registers["ip"]
+			return self.memory.addresses[current_location + num]
+		return lambda_
 
 	
 	def __previous(self) -> Token:
@@ -403,6 +481,4 @@ scanner = Scanner(memory, lines)
 parser = Parser(memory)
 memory.load(lines)
 memory.fde_cycle(scanner, parser)
-print(memory.registers)
-print(memory.addresses)
 
