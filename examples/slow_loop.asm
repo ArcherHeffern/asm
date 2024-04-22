@@ -1,7 +1,8 @@
 LOAD R1, =1
 LOAD R2, =11
-hello:
+LOOP:
 PRINT R1
 INC R1
-BLT R1, R2, hello
+SKIP
+BLT R1, R2, LOOP
 HALT

@@ -1,3 +1,5 @@
+All instructions (With arguments) occupy 4 bytes
+
 16 GPR (R1..R16)
 16 Status Registers (S1..S16)
 Instruction size: 4 bits

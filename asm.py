@@ -1,4 +1,5 @@
 from sys import argv
+from time import sleep
 from typing import Iterable, NewType, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,7 @@ TODO:
 - MMU to translate addresses
 - History feature - go back in time
 - Program to insert line numbers
+- Configuration
 
 Next Version
 - Assembler
@@ -27,6 +29,8 @@ EXT_ERR_NOT_A_FILE = 2
 EXT_ERR_SCAN_ERROR = 3 
 
 ERROR = False
+
+SKIP_TIME = .3 # seconds
 
 def error(msg: str):
 	global ERROR
@@ -114,7 +118,8 @@ class Memory:
 	label_table: dict[str, int] = field(default_factory = dict)
 
 	status_registers = {
-		"ip": 0
+		"ip": 0,
+		"halt": 0
 	}
 
 	starting_address: int = 0
@@ -126,7 +131,7 @@ class Memory:
 			
 
 	def fde_cycle(self, scanner: 'Scanner', parser: 'Parser'):
-		while True:
+		while self.status_registers["halt"] == 0:
 			instruction = self.fetch()
 			ast = self.decode(instruction, scanner, parser)
 			if ast is None: # halt flag or error parsing halt flag
@@ -301,7 +306,9 @@ class Parser:
 				statement = self.__parse_print_statement()
 			case TokenType.DUMP:
 				statement = self.__parse_dump_statement()
-			case TokenType.NUMBER|TokenType.EOL|TokenType.SKIP: # Do nothing in these cases
+			case TokenType.SKIP:
+				statement = self.__parse_skip_statement()
+			case TokenType.NUMBER|TokenType.EOL: # Do nothing in these cases
 				statement = lambda: 0
 			case _:
 				error(f"Unexpected token {curr} on line {self.memory.status_registers['ip']}")
@@ -483,7 +490,14 @@ class Parser:
 
 	def __parse_halt_statement(self):
 		self.__consume(TokenType.HALT)
-		return None
+		def lambda():
+			self.memory.status_registers["halt"] = 1
+		return lambda_
+
+	def __parse_skip_statement(self):
+		def lambda_():
+			sleep(SKIP_TIME)
+		return lambda_
 
 	def __parse_print_statement(self):
 		self.__consume(TokenType.PRINT)
