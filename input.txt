@@ -1,3 +1,7 @@
 LOAD R1, =5
+LOAD R2 , =111
+LOAD R1                    ,        =11
+STORE R1, 10
+LOAD R3, [0,R1] # Load value at memaddr 5 into R3
 HALT
 

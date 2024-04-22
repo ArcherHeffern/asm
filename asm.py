@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum, auto
 
+DEBUG = False
+
 """
 TODO: 
 - ALlow for multiple register sets
@@ -54,6 +56,9 @@ class TokenType(Enum):
 
 	PRINT = auto()
 
+	EOF = auto()
+	EOL = auto()
+
 
 KEYWORDS = {
 	"LOAD": TokenType.LOAD,
@@ -84,7 +89,7 @@ class Memory:
 
 	starting_address: int = 0
 
-	def load(self, lines: list[str], size: int = 10):
+	def load(self, lines: list[str], size: int = 100):
 		self.addresses = [0] * size
 		for i, line in enumerate(lines):
 			self.addresses[i+self.starting_address] = line
@@ -97,10 +102,10 @@ class Memory:
 			if ast is None: # halt flag or error parsing halt flag
 				break
 			self.execute(ast)
+			self.status_registers["ip"] += 1 
 
 	def fetch(self):
-		self.status_registers["ip"] += 1 
-		return self.addresses[self.__mmu(self.status_registers["ip"] - 1)]
+		return self.addresses[self.__mmu(self.status_registers["ip"])]
 
 	def decode(self, instruction, scanner: 'Scanner', parser: 'Parser'):
 		tokens = scanner.scan_line(instruction)
@@ -129,7 +134,7 @@ class Memory:
 class Token:
 	tokentype: TokenType
 	lexeme: str
-	literal: str|None 
+	literal: str|int|None 
 
 	def __repr__(self):
 		if self.literal is not None:
@@ -166,6 +171,8 @@ class Scanner:
 					self.__add_token(TokenType.DOLLAR)
 				case " "|"\n"|"\t":
 					...
+				case "#":
+					break
 				case _:
 					if c.isnumeric():
 						self.__number()
@@ -176,7 +183,7 @@ class Scanner:
 		return self.tokens
 
 	def __is_at_end(self):
-		return self.curr >= len(self.line)
+			return self.curr >= len(self.line)
 
 	def __advance(self):
 		c = self.line[self.curr]
@@ -188,7 +195,7 @@ class Scanner:
 		self.tokens.append(lex)
 
 	def __number(self):
-		while self.__peek().isnumeric():
+		while not self.__is_at_end() and self.__peek().isnumeric():
 			self.__advance()
 		number = int(self.line[self.start: self.curr])
 		self.__add_token(TokenType.NUMBER, number)
@@ -213,7 +220,7 @@ class Scanner:
 
 	def __peek(self) -> str:
 		if self.__is_at_end():
-			return "\0"
+			return Token(TokenType.EOF, "", "")	
 		return self.line[self.curr]
 
 class Parser:
@@ -221,12 +228,12 @@ class Parser:
 		self.memory = memory
 	
 	def parse(self, tokens) -> Callable|None:
+		if DEBUG:
+			print(tokens)
 		self.tokens = tokens
 		self.current = 0
 
 		curr = self.__peek()
-		if curr == "\0":
-			error("Expected HALT flag but none found")
 		match curr.tokentype:
 			case TokenType.LOAD:
 				statement = self.__parse_load_statement()
@@ -244,8 +251,10 @@ class Parser:
 				statement = self.__parse_halt_statement()
 			case TokenType.PRINT:
 				statement = self.__parse_print_statement()
+			case TokenType.EOL:
+				statement = lambda: 0
 			case _:
-				error(f"Unknown token {curr} handled while scanning")
+				error(f"Unexpected token {curr} on line {self.memory.status_registers['ip']}")
 		return statement
 
 	def __parse_load_statement(self):
@@ -256,12 +265,8 @@ class Parser:
 		def lambda_():
 			self.memory.registers[register.lexeme] = value_at()
 		return lambda_
-		...
 	
 	def __parse_load_addr_types(self):
-		# TODO: How to handle if there are many possibilities: Eg. All the addressing types
-		# Returns a function returning the actual value - will need to calculate on the fly
-		# This one doesn't call the function because its more of a logic thingy
 		curr = self.__peek()
 		match curr.tokentype:
 			case TokenType.NUMBER:
@@ -271,7 +276,7 @@ class Parser:
 			case TokenType.LBRACET:
 				func = self.__parse_index_addr()
 			case TokenType.AT:
-				func = self.__parse_index_addr()
+				func = self.__parse_indirect_addr()
 			case TokenType.DOLLAR:
 				func = self.__parse_relative_addr()
 			case _:
@@ -280,7 +285,31 @@ class Parser:
 		...
 
 	def __parse_store_statement(self):
-		...
+		self.__consume(TokenType.STORE)
+		register = self.__consume(TokenType.REGISTER)
+		self.__consume(TokenType.COMMA)
+		value_to = self.__parse_store_addr_types()
+		def lambda_():
+			self.memory.addresses[value_to] = str(self.memory.registers[register.lexeme])
+		return lambda_
+
+	def __parse_store_addr_types(self) -> int:
+		curr = self.__advance()
+		match curr.tokentype:
+			case TokenType.NUMBER:
+				return curr.literal
+			case TokenType.LBRACET:
+				num = self.__consume(TokenType.NUMBER).literal
+				self.__consume(TokenType.COMMA)
+				reg = self.__consume(TokenType.REGISTER)
+				self.__consume(TokenType.RBRACKET)
+				return self.memory.registers[reg] + num
+			case TokenType.DOLLAR:
+				offset = self.__consume(TokenType.NUMBER).literal
+				return self.memory.status_registers["ip"] + offset
+			case _:
+				error("Error parsing store addr")
+
 	def __parse_add_statement(self):
 		...
 	def __parse_sub_statement(self):
@@ -312,14 +341,11 @@ class Parser:
 
 	def __parse_index_addr(self):
 		self.__match(TokenType.LBRACET)
-		if not (num := self.__match(TokenType.NUMBER)):
-			raise Exception("Index addressing expected number")
-		if not self.__match(TokenType.COMMA):
-			raise Exception("Index addressing expected comma")
-		if not (register := self.__match(TokenType.REGISTER)):
-			raise Exception("Index addressing expected register")
+		num = self.__consume(TokenType.NUMBER).literal
+		self.__consume(TokenType.COMMA)
+		register = self.__consume(TokenType.REGISTER).literal
 		def lambda_():
-			return self.memory[num + self.memory.registers[register.lexeme]]
+			return self.memory.addresses[num + self.memory.registers[register]]
 		return lambda_
 
 	def __parse_indirect_addr(self):
@@ -338,7 +364,7 @@ class Parser:
 
 	def __peek(self) -> TokenType:
 		if self.__is_at_end():
-			return "\0"
+			return Token(TokenType.EOL, "", "")
 		return self.tokens[self.current]
 	
 	def __check(self, token: TokenType) -> bool:
@@ -352,7 +378,7 @@ class Parser:
 	def __consume(self, token: TokenType) -> Token:
 		v = self.__match(token)
 		if v is None:
-			raise Exception(f"Token {token} not found")
+			raise Exception(f"Token {token} expected but not found")
 		return v
 		
 	def __is_at_end(self):
