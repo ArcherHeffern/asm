@@ -18,6 +18,7 @@ Next Version
 - Assembler
 - All memory is integers
 - Meta compiler: Use dictionaries to store rules
+- Label table
 """
 
 EXT_SUCCESS = 0
@@ -59,6 +60,14 @@ class TokenType(Enum):
 	DIV = auto()
 	INC = auto()
 
+	BR = auto()
+	BLT = auto()
+	BGT = auto()
+	BLEQ = auto()
+	BGEQ = auto()
+	BEQ = auto()
+	BNEQ = auto()
+
 	HALT = auto()
 	SKIP = auto()
 
@@ -77,6 +86,13 @@ KEYWORDS = {
 	"MUL": TokenType.MUL,
 	"DIV": TokenType.DIV,
 	"INC": TokenType.INC,
+	"BR": TokenType.BR,
+	"BLT": TokenType.BLT,
+	"BGT": TokenType.BGT,
+	"BLEQ": TokenType.BLEQ,
+	"BGEQ": TokenType.BGEQ,
+	"BEQ": TokenType.BEQ,
+	"BNEQ": TokenType.BNEQ,
 	"HALT": TokenType.HALT,
 	"SKIP": TokenType.SKIP,
 	"PRINT": TokenType.PRINT,
@@ -94,6 +110,8 @@ class Memory:
 		"R5": 0, 
 		"R6": 0,
 	}
+
+	label_table: dict[str, int] = field(default_factory = dict)
 
 	status_registers = {
 		"ip": 0
@@ -195,6 +213,8 @@ class Scanner:
 		return self.tokens
 
 	def __is_at_end(self):
+			if type(self.line) is int:
+				error("HALT instruction not found")
 			return self.curr >= len(self.line)
 
 	def __advance(self):
@@ -263,6 +283,20 @@ class Parser:
 				statement = self.__parse_inc_statement()
 			case TokenType.HALT:
 				statement = self.__parse_halt_statement()
+			case TokenType.LABEL:
+				statement = self.__parse_label_statement()
+			case TokenType.BR:
+				statement = self.__parse_br_statement()
+			case TokenType.BLT:
+				statement = self.__parse_blt_statement()
+			case TokenType.BGT:
+				statement = self.__parse_bgt_statement()
+			case TokenType.BLEQ:
+				statement = self.__parse_bleq_statement()
+			case TokenType.BGEQ:
+				statement = self.__parse_bgeq_statement()
+			case TokenType.BEQ:
+				statement = self.__parse_beq_statement()
 			case TokenType.PRINT:
 				statement = self.__parse_print_statement()
 			case TokenType.DUMP:
@@ -367,6 +401,86 @@ class Parser:
 			self.memory.registers[r] = int(self.memory.registers[r]) + 1
 		return lambda_
 
+	def __parse_label_statement(self):
+		label = self.__consume(TokenType.LABEL).literal
+		def lambda_():
+			self.memory.label_table[label] = self.memory.status_registers["ip"]
+		return lambda_
+
+	def __goto_label(self, label):
+		try:
+			self.memory.status_registers["ip"] = self.memory.label_table[label]
+		except:
+			error("Label {label} does not exist")
+
+	def __parse_br_statement(self):
+		self.__consume(TokenType.BR)
+		label = self.__consume(TokenType.LITERAL).literal
+		def lambda_():
+			self.__goto_label(label)
+		return lambda_
+
+	def __binary_br_helper(self) -> tuple[str, str, str]: # ri, rj, label
+		self.__consume(TokenType.BLT)
+		ri = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		rj = self.__consume(TokenType.REGISTER).literal
+		self.__consume(TokenType.COMMA)
+		label = self.__consume(TokenType.LITERAL).literal
+		return ri, rj, label
+		
+	def __parse_blt_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] < registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+
+	def __parse_bgt_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] > registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+		...
+
+	def __parse_bleq_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] <= registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+		...
+
+	def __parse_bgeq_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] >= registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+		...
+
+	def __parse_beq_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] == registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+		...
+
+	def __parse_bneq_statement(self):
+		ri, rj, label = self.__binary_br_helper()
+		def lambda_():
+			registers = self.memory.registers
+			if registers[ri] != registers[rj]:
+				self.__goto_label(label)
+		return lambda_
+
 	def __parse_halt_statement(self):
 		self.__consume(TokenType.HALT)
 		return None
@@ -389,6 +503,7 @@ class Parser:
 		self.__consume(TokenType.DUMP)
 		def lambda_():
 			print(f"Registers: {self.memory.registers}")
+			print(f"Label Table: {self.memory.label_table}")
 			print(f"Main Memory: {self.memory.addresses}")
 		return lambda_
 
