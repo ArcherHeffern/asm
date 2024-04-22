@@ -32,19 +32,14 @@ ERROR = False
 
 SKIP_TIME = .3 # seconds
 
-def error(msg: str):
-	global ERROR
-	ERROR = True
-	print(msg)
-	exit(EXT_ERR_SCAN_ERROR)
 
 
 class TokenType(Enum):
 	# Single character Tokens
 	COMMA = auto()
 	EQUALS = auto()
-	RBRACET = auto()
-	LBRACET = auto()
+	RBRACKET = auto()
+	LBRACKET = auto()
 	AT = auto()
 	DOLLAR = auto()
 
@@ -57,6 +52,9 @@ class TokenType(Enum):
 	# Keywords
 	LOAD = auto()
 	STORE = auto()
+
+	READ = auto()
+	WRITE = auto()
 
 	ADD = auto()
 	SUB = auto()
@@ -85,6 +83,8 @@ class TokenType(Enum):
 KEYWORDS = {
 	"LOAD": TokenType.LOAD,
 	"STORE": TokenType.STORE,
+	"READ": TokenType.READ,
+	"WRITE": TokenType.WRITE,
 	"ADD": TokenType.ADD,
 	"SUB": TokenType.SUB,
 	"MUL": TokenType.MUL,
@@ -119,12 +119,19 @@ class Memory:
 
 	status_registers = {
 		"ip": 0,
-		"halt": 0
+		"halt": 0,
+		"error": 0
 	}
+
+	def error(self, msg: str):
+		self.status_registers["error"] = 1
+		print(f"Line {self.status_registers['ip']}: {msg}")
+		exit(1)
 
 	starting_address: int = 0
 
 	def load(self, lines: list[str], size: int = 100):
+		self.disk = [0] * size
 		self.addresses = [0] * size
 		for i, line in enumerate(lines):
 			self.addresses[i+self.starting_address] = line.strip()
@@ -197,9 +204,9 @@ class Scanner:
 				case "=":
 					self.__add_token(TokenType.EQUALS)
 				case "[":
-					self.__add_token(TokenType.LBRACET)
+					self.__add_token(TokenType.LBRACKET)
 				case "]":
-					self.__add_token(TokenType.RBRACET)
+					self.__add_token(TokenType.RBRACKET)
 				case "@":
 					self.__add_token(TokenType.AT)
 				case "$":
@@ -276,6 +283,10 @@ class Parser:
 				statement = self.__parse_load_statement()
 			case TokenType.STORE:
 				statement = self.__parse_store_statement()
+			case TokenType.READ:
+				statement = self.__parse_read_statement()
+			case TokenType.WRITE:
+				statement = self.__parse_write_statement()
 			case TokenType.ADD:
 				statement = self.__parse_add_statement()
 			case TokenType.SUB:
@@ -311,7 +322,7 @@ class Parser:
 			case TokenType.NUMBER|TokenType.EOL: # Do nothing in these cases
 				statement = lambda: 0
 			case _:
-				error(f"Unexpected token {curr} on line {self.memory.status_registers['ip']}")
+				self.memory.error(f"Parse Error: Unexpected token {curr}")
 		return statement
 
 	def __parse_load_statement(self):
@@ -330,7 +341,7 @@ class Parser:
 				func = self.__parse_direct_addr()
 			case TokenType.EQUALS:
 				func = self.__parse_immediate_addr()
-			case TokenType.LBRACET:
+			case TokenType.LBRACKET:
 				func = self.__parse_index_addr()
 			case TokenType.AT:
 				func = self.__parse_indirect_addr()
@@ -347,7 +358,7 @@ class Parser:
 		self.__consume(TokenType.COMMA)
 		value_to = self.__parse_store_addr_types()
 		def lambda_():
-			self.memory.addresses[value_to] = str(self.memory.registers[register.lexeme])
+			self.memory.addresses[value_to] = str(self.memory.registers[register.literal])
 		return lambda_
 
 	def __parse_store_addr_types(self) -> int:
@@ -355,7 +366,7 @@ class Parser:
 		match curr.tokentype:
 			case TokenType.NUMBER:
 				return curr.literal
-			case TokenType.LBRACET:
+			case TokenType.LBRACKET:
 				num = self.__consume(TokenType.NUMBER).literal
 				self.__consume(TokenType.COMMA)
 				reg = self.__consume(TokenType.REGISTER)
@@ -364,8 +375,47 @@ class Parser:
 			case TokenType.DOLLAR:
 				offset = self.__consume(TokenType.NUMBER).literal
 				return self.memory.status_registers["ip"] + offset
-			case _:
-				error("Error parsing store addr")
+			case t:
+				self.memory.error(f"Parse Error: Expected NUMBER or RBRACKET but found {t}")
+
+	def __parse_read_statement(self):
+		# direct addressing and index addressing
+		self.__consume(TokenType.READ)
+		ri = self.__consume(TokenType.REGISTER)
+		self.__consume(TokenType.COMMA)
+		nxt = self.__advance()
+		match nxt.tokentype:
+			case TokenType.NUMBER: # direct addressing
+				disk_index = nxt.literal
+			case TokenType.LBRACKET: # index addressing
+				disk_addr = self.__consume(TokenType.NUMBER).literal
+				self.__consume(TokenType.COMMA)
+				rj = self.__consume(TokenType.REGISTER).literal
+				disk_index = disk_addr + self.memory.registers[rj]
+			case t:
+				self.memory.error(f"Parse Error: Expected NUMBER or LBRACKET but found {t}")
+		def lambda_():
+			self.memory.registers[ri.literal] = self.memory.disk[disk_index]
+		return lambda_
+
+	def __parse_write_statement(self):
+		self.__consume(TokenType.WRITE)
+		ri = self.__consume(TokenType.REGISTER)
+		self.__consume(TokenType.COMMA)
+		nxt = self.__advance()
+		match nxt.tokentype:
+			case TokenType.NUMBER: # direct addressing
+				disk_index = nxt.literal
+			case TokenType.LBRACKET:
+				disk_addr = self.__consume(TokenType.NUMBER).literal
+				self.__consume(TokenType.COMMA)
+				rj = self.__consume(TokenType.REGISTER).literal
+				disk_index = disk_addr + self.memory.registers[rj]
+			case t:
+				self.memory.error(f"Parse Error: Expected NUMBER or LBRACKET but found {t}")
+		def lambda_():
+			self.memory.disk[disk_index] = self.memory.registers[ri.literal]
+		return lambda_
 
 	def __parse_add_statement(self):
 		self.__consume(TokenType.ADD)
@@ -415,10 +465,10 @@ class Parser:
 		return lambda_
 
 	def __goto_label(self, label):
-		try:
-			self.memory.status_registers["ip"] = self.memory.label_table[label]
-		except:
-			error(f"Label {label} does not exist")
+		addr = self.memory.label_table.get(label)
+		if addr is None:
+			self.memory.error(f"Parse Error: Label {label} does not exist")
+		self.memory.status_registers["ip"] = addr
 
 	def __parse_br_statement(self):
 		self.__consume(TokenType.BR)
@@ -507,10 +557,10 @@ class Parser:
 				r = self.__consume(TokenType.REGISTER).literal
 				return lambda: print(f"{r}: {self.memory.registers[r]}")
 			case TokenType.NUMBER:
-				n = self.consume(TokenType.NUMBER)
+				n = self.__consume(TokenType.NUMBER).literal
 				return lambda: print(f"M[{n}]: {self.memory.addresses[n]}")
-			case _:
-				error("Error parsing print statement")
+			case t:
+				self.memory.error(f"Parse Error: Expected REGISTER or NUMBER but found {t}")
 				
 
 	def __parse_dump_statement(self):
@@ -536,7 +586,7 @@ class Parser:
 		return lambda_
 
 	def __parse_index_addr(self):
-		self.__match(TokenType.LBRACET)
+		self.__match(TokenType.LBRACKET)
 		num = self.__consume(TokenType.NUMBER).literal
 		self.__consume(TokenType.COMMA)
 		register = self.__consume(TokenType.REGISTER).literal

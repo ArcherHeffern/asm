@@ -1,0 +1,7 @@
+PRINT R1
+LOAD R1, =5
+LOAD R2, =5 # Offset 
+WRITE R1, 10
+READ R2, [5, R2]
+PRINT R2 # expect 5 in R2
+HALT
