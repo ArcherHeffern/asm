@@ -411,7 +411,7 @@ class Parser:
 		try:
 			self.memory.status_registers["ip"] = self.memory.label_table[label]
 		except:
-			error("Label {label} does not exist")
+			error(f"Label {label} does not exist")
 
 	def __parse_br_statement(self):
 		self.__consume(TokenType.BR)
