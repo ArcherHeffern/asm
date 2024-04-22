@@ -221,12 +221,12 @@ class Scanner:
 					elif c.isalpha():
 						self.__identifier(memory)
 					else: 
-						error("Lexeme not found")
+						self.memory.error("Lexeme not found")
 		return self.tokens
 
 	def __is_at_end(self):
 			if type(self.line) is int:
-				error("HALT instruction not found")
+				self.memory.error("HALT instruction not found")
 			return self.curr >= len(self.line)
 
 	def __advance(self):
